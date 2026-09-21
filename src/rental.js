@@ -147,3 +147,70 @@ export async function cancelRentalOrder({ phone, sku }) {
 
   return { orderId, state: 'cancel' };
 }
+
+// Updates the most recent confirmed rental order for this phone + sku (same
+// lookup as cancel/return, so callers never need an Odoo order id). Only the
+// fields actually passed are touched. A confirmed order's lines can't be
+// deleted in Odoo, so this only ever edits/adds - it never removes the bond line.
+export async function updateRentalOrder({ phone, sku, startDate, returnDate, price, bond }) {
+  if (!phone || !sku) throw new Error('phone and sku are required');
+
+  const partnerId = await findPartnerByContact({ phone });
+  if (!partnerId) throw new Error(`No customer found for phone "${phone}"`);
+
+  const product = await findProductBySku(sku);
+
+  const orders = await executeKw(
+    'sale.order', 'search_read',
+    [[
+      ['partner_id', '=', partnerId],
+      ['state', '=', 'sale'],
+      ['order_line.product_id', '=', product.id],
+      ['order_line.is_rental', '=', true],
+    ]],
+    { fields: ['id'], order: 'id desc', limit: 1 },
+  );
+  if (!orders.length) throw new Error(`No active rental order found for phone "${phone}" and sku "${sku}"`);
+  const orderId = orders[0].id;
+
+  const lines = await executeKw(
+    'sale.order.line', 'search_read',
+    [[['order_id', '=', orderId]]],
+    { fields: ['product_id', 'is_rental'] },
+  );
+  const rentalLine = lines.find((l) => l.is_rental && l.product_id[0] === product.id);
+
+  const orderVals = {};
+  if (startDate) orderVals.rental_start_date = startDate;
+  if (returnDate) orderVals.rental_return_date = returnDate;
+  if (Object.keys(orderVals).length) {
+    await executeKw('sale.order', 'write', [[orderId], orderVals]);
+  }
+
+  const lineVals = {};
+  if (startDate) lineVals.start_date = startDate;
+  if (returnDate) lineVals.return_date = returnDate;
+  if (price !== undefined && price !== null) lineVals.price_unit = price;
+  if (Object.keys(lineVals).length) {
+    await executeKw('sale.order.line', 'write', [[rentalLine.id], lineVals]);
+  }
+
+  let bondLineId = null;
+  if (bond?.amount) {
+    const bondProduct = await findProductBySku(bond.sku, { requireRentable: false });
+    const existing = lines.find((l) => !l.is_rental && l.product_id[0] === bondProduct.id);
+    if (existing) {
+      await executeKw('sale.order.line', 'write', [[existing.id], { price_unit: bond.amount, product_uom_qty: 1 }]);
+      bondLineId = existing.id;
+    } else {
+      bondLineId = await executeKw('sale.order.line', 'create', [{
+        order_id: orderId,
+        product_id: bondProduct.id,
+        product_uom_qty: 1,
+        price_unit: bond.amount,
+      }]);
+    }
+  }
+
+  return { orderId, rentalLineId: rentalLine.id, bondLineId };
+}

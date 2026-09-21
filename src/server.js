@@ -2,7 +2,7 @@ import 'dotenv/config';
 import express from 'express';
 import { getVersion } from './odooClient.js';
 import { getStorableProducts, getOnHandQuants, getNegativeOnHand } from './inventory.js';
-import { getRentalCounts, getActiveRentalLines, createRentalOrder, returnRentalOrder, cancelRentalOrder } from './rental.js';
+import { getRentalCounts, getActiveRentalLines, createRentalOrder, returnRentalOrder, cancelRentalOrder, updateRentalOrder } from './rental.js';
 
 const app = express();
 const port = process.env.PORT || 4001;
@@ -86,6 +86,22 @@ app.post('/rentals/return', async (req, res) => {
       return res.status(400).json({ error: 'phone and sku are required' });
     }
     const result = await returnRentalOrder({ phone, sku });
+    res.json(result);
+  } catch (err) {
+    res.status(422).json({ error: err.message });
+  }
+});
+
+app.post('/rentals/update', async (req, res) => {
+  try {
+    const { phone, sku, startDate, returnDate, price, bond } = req.body || {};
+    if (!phone || !sku) {
+      return res.status(400).json({ error: 'phone and sku are required' });
+    }
+    if (bond && !bond.sku) {
+      return res.status(400).json({ error: 'bond.sku is required when bond is given' });
+    }
+    const result = await updateRentalOrder({ phone, sku, startDate, returnDate, price, bond });
     res.json(result);
   } catch (err) {
     res.status(422).json({ error: err.message });

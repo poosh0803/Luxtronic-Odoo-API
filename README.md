@@ -63,6 +63,12 @@ This authenticates, prints the server version, then reports:
 - `POST /rentals/return` — mark a picked-up rental as returned. Body: `{ "phone": "0400000000", "sku": "PRODUCT-CODE" }`.
   Looks up the customer (by phone only) and product (by `default_code`/`barcode`), then finds their most recent rental line that is picked-up but not yet returned (`rental_status = "return"`) and sets `qty_returned` to the full quantity, flipping it to **Returned** and restoring stock. `422` if no matching picked-up rental is found (e.g. already returned, or never existed).
 
+- `POST /rentals/update` — edit an existing rental order. Body: `{ "phone", "sku", "startDate"?, "returnDate"?, "price"?, "bond"?: { "sku", "amount" } }`.
+  Finds the customer's most recent **confirmed** order containing that rental product (same lookup as cancel) and updates only the fields
+  given: rental dates (order + line), the rental line's `price_unit`, and the bond line's price (the bond line is created if the order
+  doesn't have one yet; it is never removed, since Odoo won't delete lines from a confirmed order). Returns `{ orderId, rentalLineId, bondLineId }`,
+  or `422` if no matching active order exists.
+
 - `POST /rentals/cancel` — cancel an active rental order. Body: `{ "phone": "0400000000", "sku": "PRODUCT-CODE" }`.
   Looks up the customer and product the same way, finds their most recent **confirmed** order (`state = "sale"`) containing that rental product, and calls `action_cancel` on it (order becomes `state = "cancel"`, stays in Odoo for audit — not deleted). `422` if no matching active order is found.
 
