@@ -3,7 +3,7 @@
 Internal LAN service (Node.js/Express, no auth — trusted-LAN only) reading and writing
 Odoo Online data via its External API, focused on **inventory** first, with rental as a
 secondary concern. No frontend lives here; this only serves data to other LAN services
-(e.g. **Luxtronic-Rental-Neo**, which posts new rentals here to be created in Odoo).
+(e.g. **Luxtronic-Rental-Neo**, which mirrors every rental's create, edit, return and delete to Odoo through this API).
 
 ## Requirements
 
@@ -13,8 +13,9 @@ secondary concern. No frontend lives here; this only serves data to other LAN se
 ## Setup
 
 1. `npm install`
-2. Fill in `.env` with your `ODOO_URL`, `ODOO_DB`, `ODOO_USERNAME`, and `ODOO_API_KEY`.
+2. `cp .env.example .env`, then fill in `ODOO_URL`, `ODOO_DB`, `ODOO_USERNAME`, and `ODOO_API_KEY` (and `PORT` if not 4001).
 3. `npm test` (runs `test-connection.js`)
+4. `npm start` to run the REST API.
 
 This authenticates, prints the server version, then reports:
 - inventory: sample storable products with on-hand/forecast quantities, and raw `stock.quant` records
@@ -24,9 +25,10 @@ This authenticates, prints the server version, then reports:
 
 - `src/odooClient.js` — thin JSON-RPC client (auth + `execute_kw` wrapper) talking to Odoo's `/jsonrpc` endpoint
 - `src/inventory.js` — inventory queries (primary focus)
-- `src/rental.js` — rental queries + rental order creation (secondary)
+- `src/rental.js` — rental queries + rental order create/update/return/cancel (secondary)
 - `src/server.js` — Express REST API (`npm start`, port from `PORT` in `.env`, default 4001)
 - `test-connection.js` — smoke test / example usage of both
+- `ecosystem.config.cjs` — pm2 process config (`luxtronic-odoo-api`)
 
 ## API endpoints
 
@@ -56,23 +58,33 @@ This authenticates, prints the server version, then reports:
   Response: `201` with `{ "orderId": 285, "partnerId": 470, "productId": 537, "bondProductId": 541 }` (`bondProductId`
   is `null` when no `bond` was given), or `422` with `{ "error": "..." }`.
 
-  - Customer is matched by phone or email against an existing `res.partner`; if none matches, a new one is created with the **phone number as the partner name** (matches the existing convention in this Odoo's rental data — customers are named by phone number, not a real name).
+  - Customer lookup (shared by every endpoint below): first a `res.partner` whose **name** equals the phone, then one whose `phone` (or `email`) field matches. The name check comes first because most existing customers in this Odoo were entered with the phone number as their name and the Phone field left blank — matching on the Phone field alone would miss them and create duplicates. If nothing matches, a new partner is created with the phone number as both its name and phone.
   - Product is looked up by `default_code` or `barcode` and must have `rent_ok = true` in Odoo, or the call fails.
   - The order is created, confirmed via `action_confirm` (reserves stock), and immediately marked **picked-up** (`qty_delivered` set to the full quantity) — so a rental posted here is treated as already handed to the customer, not just booked.
 
 - `POST /rentals/return` — mark a picked-up rental as returned. Body: `{ "phone": "0400000000", "sku": "PRODUCT-CODE" }`.
-  Looks up the customer (by phone only) and product (by `default_code`/`barcode`), then finds their most recent rental line that is picked-up but not yet returned (`rental_status = "return"`) and sets `qty_returned` to the full quantity, flipping it to **Returned** and restoring stock. `422` if no matching picked-up rental is found (e.g. already returned, or never existed).
+  Looks up the customer (by phone, as above) and product (by `default_code`/`barcode`), then finds their most recent rental line that is picked-up but not yet returned (`rental_status = "return"`) and sets `qty_returned` to the full quantity, flipping it to **Returned** and restoring stock. `422` if no matching picked-up rental is found (e.g. already returned, or never existed).
 
 - `POST /rentals/update` — edit an existing rental order. Body: `{ "phone", "sku", "startDate"?, "returnDate"?, "price"?, "bond"?: { "sku", "amount" } }`.
   Finds the customer's most recent **confirmed** order containing that rental product (same lookup as cancel) and updates only the fields
-  given: rental dates (order + line), the rental line's `price_unit`, and the bond line's price (the bond line is created if the order
-  doesn't have one yet; it is never removed, since Odoo won't delete lines from a confirmed order). Returns `{ orderId, rentalLineId, bondLineId }`,
-  or `422` if no matching active order exists.
+  given: rental dates (order + line), the rental line's `price_unit`, and the bond line's price. The existing bond line is found by
+  product **name**, not id — this Odoo has two products named "Rental Bond" (an archived one used by older orders, and the current
+  `RENTAL-BOND` one), and matching by id would add a second bond line to older orders. A bond line is created only if the order has
+  none; it is never removed, since Odoo won't delete lines from a confirmed order (set its quantity to 0 instead). Returns
+  `{ orderId, rentalLineId, bondLineId }`, or `422` if no matching active order exists.
 
 - `POST /rentals/cancel` — cancel an active rental order. Body: `{ "phone": "0400000000", "sku": "PRODUCT-CODE" }`.
   Looks up the customer and product the same way, finds their most recent **confirmed** order (`state = "sale"`) containing that rental product, and calls `action_cancel` on it (order becomes `state = "cancel"`, stays in Odoo for audit — not deleted). `422` if no matching active order is found.
 
-All three write endpoints identify the order/line by **phone + SKU** rather than an Odoo order ID, so Rental-Neo never needs to persist any Odoo-side IDs — resolving whatever "current" rental matches those two values is left to this service.
+The return, update and cancel endpoints identify the order/line by **phone + SKU** rather than an Odoo order ID, so Rental-Neo never needs to persist any Odoo-side IDs — resolving whatever "current" rental matches those two values is left to this service. A consequence: a rental that was never created in Odoo can't be updated, returned or cancelled here (`422`).
+
+## Deployment
+
+Runs on the shop's LAN server under pm2 as `luxtronic-odoo-api`, on port 4001, alongside Rental-Neo. The `.env` (with the API key) is not in git and must be copied to the server separately. To update:
+
+```bash
+git pull && pm2 restart luxtronic-odoo-api
+```
 
 ## Key models for inventory
 
