@@ -18,6 +18,16 @@ export async function getActiveRentalLines() {
 }
 
 async function findPartnerByContact({ phone, email }) {
+  // Many existing partners in this Odoo were entered by the shop's own
+  // process with the phone number as the partner's Name and the Phone
+  // field left blank - check that first so those real customer records
+  // get reused instead of creating a duplicate partner (and duplicate
+  // order) every time this API can't find them by the Phone field alone.
+  if (phone) {
+    const byName = await executeKw('res.partner', 'search_read', [[['name', '=', phone]]], { fields: ['id'], limit: 1 });
+    if (byName[0]) return byName[0].id;
+  }
+
   const domain = [];
   if (phone) domain.push(['phone', '=', phone]);
   if (email) domain.push(['email', '=', email]);
