@@ -208,7 +208,11 @@ export async function updateRentalOrder({ phone, sku, startDate, returnDate, pri
   let bondLineId = null;
   if (bond?.amount) {
     const bondProduct = await findProductBySku(bond.sku, { requireRentable: false });
-    const existing = lines.find((l) => !l.is_rental && l.product_id[0] === bondProduct.id);
+    // Some existing orders' bond line uses an older/archived "Rental Bond"
+    // product rather than the current one looked up by barcode, so match
+    // by product name (not id) to update that line in place instead of
+    // adding a second, duplicate bond line.
+    const existing = lines.find((l) => l.id !== rentalLine.id && l.product_id[1] === bondProduct.display_name);
     if (existing) {
       await executeKw('sale.order.line', 'write', [[existing.id], { price_unit: bond.amount, product_uom_qty: 1 }]);
       bondLineId = existing.id;
