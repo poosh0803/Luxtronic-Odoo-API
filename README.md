@@ -34,6 +34,7 @@ This authenticates, prints the server version, then reports:
 
 - `GET /health` — connectivity + Odoo version check
 - `GET /inventory/products?limit=` — storable products with on-hand/forecast qty
+- `GET /inventory/products/all` — **read-only**, every non-archived product (goods, services, combos) in one response: `{ "count": N, "products": [...] }`. Each product has `id`, `display_name`, `default_code` (SKU), `barcode`, `type`, `is_storable`, `rent_ok`, `categ_id`, `uom_id`, `list_price`, `qty_available`, `virtual_available`. Unset text fields come back as `false` (Odoo convention), not `null`. ~1,100 products / ~320 KB / well under a second at current size.
 - `GET /inventory/quants?limit=` — raw `stock.quant` on-hand records
 - `GET /inventory/negative` — products with negative on-hand quantity
 - `GET /rentals/summary` — rental order/line counts

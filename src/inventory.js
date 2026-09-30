@@ -9,6 +9,21 @@ export async function getStorableProducts({ limit = 10 } = {}) {
   );
 }
 
+// Read-only: search_read only, never write/create/unlink
+export async function getAllActiveProducts() {
+  return executeKw(
+    'product.product', 'search_read',
+    [[['active', '=', true]]],
+    {
+      fields: [
+        'display_name', 'default_code', 'barcode', 'type', 'is_storable', 'rent_ok',
+        'categ_id', 'uom_id', 'list_price', 'qty_available', 'virtual_available',
+      ],
+      order: 'id asc',
+    },
+  );
+}
+
 export async function getOnHandQuants({ limit = 10 } = {}) {
   return executeKw(
     'stock.quant', 'search_read',

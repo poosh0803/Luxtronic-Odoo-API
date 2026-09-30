@@ -1,7 +1,7 @@
 import 'dotenv/config';
 import express from 'express';
 import { getVersion } from './odooClient.js';
-import { getStorableProducts, getOnHandQuants, getNegativeOnHand } from './inventory.js';
+import { getStorableProducts, getAllActiveProducts, getOnHandQuants, getNegativeOnHand } from './inventory.js';
 import { getRentalCounts, getActiveRentalLines, createRentalOrder, returnRentalOrder, cancelRentalOrder, updateRentalOrder } from './rental.js';
 
 const app = express();
@@ -26,6 +26,15 @@ app.get('/health', async (req, res) => {
 app.get('/inventory/products', async (req, res) => {
   try {
     res.json(await getStorableProducts({ limit: parseLimit(req) }));
+  } catch (err) {
+    res.status(502).json({ error: err.message });
+  }
+});
+
+app.get('/inventory/products/all', async (req, res) => {
+  try {
+    const products = await getAllActiveProducts();
+    res.json({ count: products.length, products });
   } catch (err) {
     res.status(502).json({ error: err.message });
   }
