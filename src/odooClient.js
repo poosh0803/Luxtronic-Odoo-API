@@ -8,18 +8,35 @@ const apiKey = process.env.ODOO_API_KEY;
 let requestId = 0;
 let cachedUid = null;
 
-async function call(service, method, args) {
+// Odoo Online occasionally answers with an HTML error page (rate limiting /
+// gateway errors) instead of JSON when it gets busy, so a non-JSON reply is
+// retried once after a short pause before giving up with a readable error.
+async function post(body, attempt = 1) {
   const res = await fetch(`${url}/jsonrpc`, {
     method: 'POST',
     headers: { 'Content-Type': 'application/json' },
-    body: JSON.stringify({
+    body,
+  });
+  try {
+    return await res.json();
+  } catch {
+    if (attempt < 2) {
+      await new Promise((r) => setTimeout(r, 1000));
+      return post(body, attempt + 1);
+    }
+    throw new Error(`Odoo returned a non-JSON response (HTTP ${res.status}) - it may be busy, try again`);
+  }
+}
+
+async function call(service, method, args) {
+  const data = await post(
+    JSON.stringify({
       jsonrpc: '2.0',
       method: 'call',
       params: { service, method, args },
       id: ++requestId,
-    }),
-  });
-  const data = await res.json();
+    })
+  );
   if (data.error) {
     throw new Error(data.error.data?.message || data.error.message || 'Odoo RPC error');
   }

@@ -66,7 +66,9 @@ This authenticates, prints the server version, then reports:
 - `POST /rentals/return` — mark a picked-up rental as returned. Body: `{ "phone": "0400000000", "sku": "PRODUCT-CODE" }`.
   Looks up the customer (by phone, as above) and product (by `default_code`/`barcode`), then finds their most recent rental line that is picked-up but not yet returned (`rental_status = "return"`) and sets `qty_returned` to the full quantity, flipping it to **Returned** and restoring stock. `422` if no matching picked-up rental is found (e.g. already returned, or never existed).
 
-- `POST /rentals/update` — edit an existing rental order. Body: `{ "phone", "sku", "startDate"?, "returnDate"?, "price"?, "bond"?: { "sku", "amount" } }`.
+- `GET /rentals/check?phone=&sku=` — **read-only** report of what Odoo holds for the customer's most recent confirmed order for that product (same lookup as update/return/cancel): `{ found, orderId, orderName, startDate, returnDate, rentalPrice, bondPrice, rentalStatus, activeOrderCount }`, or `{ found: false, reason }`. Rental-Neo compares this with its own record to show whether a rental is in sync.
+
+- `POST /rentals/update` — edit an existing rental order. Body: `{ "phone", "sku", "startDate"?, "returnDate"?, "price"?, "bond"?: { "sku", "amount" }, "status"?: "picked_up" }`. `status: "picked_up"` puts every rental line back to out-with-the-customer (delivered, not returned), repairing an order that was marked returned while the rental is still open.
   Finds the customer's most recent **confirmed** order containing that rental product (same lookup as cancel) and updates only the fields
   given: rental dates (order + line), the rental line's `price_unit`, and the bond line's price. The existing bond line is found by
   product **name**, not id — this Odoo has two products named "Rental Bond" (an archived one used by older orders, and the current
@@ -86,6 +88,8 @@ Runs on the shop's LAN server under pm2 as `luxtronic-odoo-api`, on port 4001, a
 ```bash
 git pull && pm2 restart luxtronic-odoo-api
 ```
+
+Odoo Online sometimes answers with an HTML error page instead of JSON when it is busy; the client retries such a reply once after a second, then fails with a readable message.
 
 ## Key models for inventory
 

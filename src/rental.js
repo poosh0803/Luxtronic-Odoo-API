@@ -162,7 +162,7 @@ export async function cancelRentalOrder({ phone, sku }) {
 // lookup as cancel/return, so callers never need an Odoo order id). Only the
 // fields actually passed are touched. A confirmed order's lines can't be
 // deleted in Odoo, so this only ever edits/adds - it never removes the bond line.
-export async function updateRentalOrder({ phone, sku, startDate, returnDate, price, bond }) {
+export async function updateRentalOrder({ phone, sku, startDate, returnDate, price, bond, status }) {
   if (!phone || !sku) throw new Error('phone and sku are required');
 
   const partnerId = await findPartnerByContact({ phone });
@@ -186,7 +186,7 @@ export async function updateRentalOrder({ phone, sku, startDate, returnDate, pri
   const lines = await executeKw(
     'sale.order.line', 'search_read',
     [[['order_id', '=', orderId]]],
-    { fields: ['product_id', 'is_rental'] },
+    { fields: ['product_id', 'is_rental', 'product_uom_qty'] },
   );
   const rentalLine = lines.find((l) => l.is_rental && l.product_id[0] === product.id);
 
@@ -203,6 +203,15 @@ export async function updateRentalOrder({ phone, sku, startDate, returnDate, pri
   if (price !== undefined && price !== null) lineVals.price_unit = price;
   if (Object.keys(lineVals).length) {
     await executeKw('sale.order.line', 'write', [[rentalLine.id], lineVals]);
+  }
+
+  // status = "picked_up" puts every rental line back to out-with-the-customer
+  // (delivered, not returned) - used to repair an order that was marked
+  // returned in Odoo while the rental is still open here.
+  if (status === 'picked_up') {
+    for (const l of lines.filter((l) => l.is_rental)) {
+      await executeKw('sale.order.line', 'write', [[l.id], { qty_delivered: l.product_uom_qty, qty_returned: 0 }]);
+    }
   }
 
   let bondLineId = null;
@@ -227,4 +236,49 @@ export async function updateRentalOrder({ phone, sku, startDate, returnDate, pri
   }
 
   return { orderId, rentalLineId: rentalLine.id, bondLineId };
+}
+
+// Read-only: reports what Odoo currently holds for the most recent confirmed
+// order for this phone + sku (same lookup as update/return/cancel), so a
+// caller can compare it with its own records. Never writes anything.
+export async function checkRentalOrder({ phone, sku, bondName = 'Rental Bond' }) {
+  if (!phone || !sku) throw new Error('phone and sku are required');
+
+  const partnerId = await findPartnerByContact({ phone });
+  if (!partnerId) return { found: false, reason: 'no customer with this phone in Odoo' };
+
+  const product = await findProductBySku(sku);
+
+  const orders = await executeKw(
+    'sale.order', 'search_read',
+    [[
+      ['partner_id', '=', partnerId],
+      ['state', '=', 'sale'],
+      ['order_line.product_id', '=', product.id],
+      ['order_line.is_rental', '=', true],
+    ]],
+    { fields: ['id', 'name', 'rental_start_date', 'rental_return_date'], order: 'id desc', limit: 5 },
+  );
+  if (!orders.length) return { found: false, reason: 'no active rental order for this customer and product' };
+
+  const order = orders[0];
+  const lines = await executeKw(
+    'sale.order.line', 'search_read',
+    [[['order_id', '=', order.id]]],
+    { fields: ['product_id', 'is_rental', 'price_unit', 'product_uom_qty', 'rental_status'] },
+  );
+  const rentalLine = lines.find((l) => l.is_rental && l.product_id[0] === product.id);
+  const bondLine = lines.find((l) => l !== rentalLine && l.product_id[1] === bondName && l.product_uom_qty > 0);
+
+  return {
+    found: true,
+    orderId: order.id,
+    orderName: order.name,
+    startDate: order.rental_start_date,
+    returnDate: order.rental_return_date,
+    rentalPrice: rentalLine ? rentalLine.price_unit : null,
+    bondPrice: bondLine ? bondLine.price_unit : null,
+    rentalStatus: rentalLine ? rentalLine.rental_status : null,
+    activeOrderCount: orders.length,
+  };
 }
