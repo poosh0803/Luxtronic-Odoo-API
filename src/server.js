@@ -1,7 +1,7 @@
 import 'dotenv/config';
 import express from 'express';
 import { getVersion } from './odooClient.js';
-import { getStorableProducts, getAllActiveProducts, getOnHandQuants, getNegativeOnHand } from './inventory.js';
+import { getStorableProducts, getAllActiveProducts, getOnHandQuants, getNegativeOnHand, setProductListPrice, getProductListPrice } from './inventory.js';
 import { getRentalCounts, getActiveRentalLines, createRentalOrder, returnRentalOrder, cancelRentalOrder, updateRentalOrder, checkRentalOrder } from './rental.js';
 
 const app = express();
@@ -37,6 +37,23 @@ app.get('/inventory/products/all', async (req, res) => {
     res.json({ count: products.length, products });
   } catch (err) {
     res.status(502).json({ error: err.message });
+  }
+});
+
+app.get('/inventory/products/:id/price', async (req, res) => {
+  try {
+    res.json(await getProductListPrice(req.params.id));
+  } catch (err) {
+    res.status(422).json({ error: err.message });
+  }
+});
+
+app.post('/inventory/products/price', async (req, res) => {
+  try {
+    const { productId, price } = req.body || {};
+    res.json(await setProductListPrice(productId, price));
+  } catch (err) {
+    res.status(422).json({ error: err.message });
   }
 });
 
